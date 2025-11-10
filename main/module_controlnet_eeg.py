@@ -1,4 +1,4 @@
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Literal
 
 import pytorch_lightning as pl
 import torch
@@ -13,8 +13,10 @@ from main.controlnet.pretrained import get_pretrained_controlnet_model
 from stable_audio_tools.inference.sampling import get_alphas_sigmas
 from torch.utils.data import DataLoader
 from main.utils import log_wandb_audio_batch, log_wandb_audio_spectrogram
+from main.eeg_encoders import create_eeg_projector
 
 
+# Legacy EEG projector (kept for backward compatibility)
 class EEGProjector(nn.Module):
     """Maps EEG activations to an audio-like control signal."""
 
@@ -55,6 +57,17 @@ class Model(pl.LightningModule):
         cfg_dropout_prob: float,
         num_eeg_channels: int,
         projector_hidden_dim: int,
+        # New parameters for BIOT integration
+        projector_type: Literal["simple", "biot", "hybrid"] = "simple",
+        biot_pretrained_path: Optional[str] = None,
+        freeze_biot: bool = True,
+        biot_emb_size: int = 256,
+        biot_heads: int = 8,
+        biot_depth: int = 4,
+        biot_n_fft: int = 200,
+        biot_hop_length: int = 100,
+        projection_hidden_dim: int = 512,
+        local_hidden_dim: int = 128,
     ):
         super().__init__()
         self.lr = lr
@@ -83,10 +96,21 @@ class Model(pl.LightningModule):
         self.model.pretransform.requires_grad_(False)
         self.model.pretransform.eval()
 
-        self.eeg_projector = EEGProjector(
+        # Create EEG projector using factory function
+        self.eeg_projector = create_eeg_projector(
+            projector_type=projector_type,
             num_eeg_channels=num_eeg_channels,
-            hidden_dim=projector_hidden_dim,
             target_length=self.sample_size,
+            hidden_dim=projector_hidden_dim,  # for simple projector
+            biot_pretrained_path=biot_pretrained_path,
+            freeze_biot=freeze_biot,
+            biot_emb_size=biot_emb_size,
+            biot_heads=biot_heads,
+            biot_depth=biot_depth,
+            biot_n_fft=biot_n_fft,
+            biot_hop_length=biot_hop_length,
+            projection_hidden_dim=projection_hidden_dim,
+            local_hidden_dim=local_hidden_dim,
         )
 
     def configure_optimizers(self):

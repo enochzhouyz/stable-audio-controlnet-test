@@ -1,0 +1,117 @@
+# Training configuration for DEAP EEG-to-Music with BIOT encoder
+
+defaults:
+  - _self_
+
+# Model Configuration
+model:
+  _target_: main.module_controlnet_eeg.Model
+  lr: 1.0e-4
+  lr_beta1: 0.9
+  lr_beta2: 0.999
+  lr_eps: 1.0e-8
+  lr_weight_decay: 0.01
+  depth_factor: 0.5
+  cfg_dropout_prob: 0.1
+  num_eeg_channels: 32  # DEAP has 32 EEG channels
+  projector_hidden_dim: 128  # Not used for BIOT but kept for backward compatibility
+  
+  # BIOT Configuration
+  projector_type: "biot"  # Options: "simple", "biot", "hybrid"
+  biot_pretrained_path: "Sample Code BIOT/BIOT/pretrained-models/EEG-PREST-16-channels.ckpt"
+  freeze_biot: true  # Freeze BIOT encoder weights
+  biot_emb_size: 256
+  biot_heads: 8
+  biot_depth: 4
+  biot_n_fft: 200
+  biot_hop_length: 100
+  projection_hidden_dim: 512
+  local_hidden_dim: 128
+
+# Dataset Configuration
+datamodule:
+  _target_: main.module_controlnet_eeg.EEGDatamodule
+  batch_size_train: 8
+  batch_size_val: 8
+  num_workers: 4
+  pin_memory: true
+  drop_last: true
+  persistent_workers: true
+  multiprocessing_context: "spawn"
+  shuffle_train: true
+  
+  train_dataset:
+    _target_: main.data.dataset_deap.create_deap_dataset
+    eeg_root: "${data_dir}/DEAP/data_preprocessed_python"
+    audio_root: "${data_dir}/DEAP/audio"
+    sample_rate: 44100
+    chunk_dur: 10.0  # 10 second chunks
+    audio_template: "s{subject_id:02d}_t{trial_index:02d}.wav"
+    eeg_sample_rate: 128
+    num_eeg_channels: 32
+    baseline_seconds: 3.0
+    cache_subjects: true
+    stereo: true
+  
+  val_dataset:
+    _target_: main.data.dataset_deap.create_deap_dataset
+    eeg_root: "${data_dir}/DEAP/data_preprocessed_python"
+    audio_root: "${data_dir}/DEAP/audio_val"
+    sample_rate: 44100
+    chunk_dur: 10.0
+    audio_template: "s{subject_id:02d}_t{trial_index:02d}.wav"
+    eeg_sample_rate: 128
+    num_eeg_channels: 32
+    baseline_seconds: 3.0
+    cache_subjects: true
+    stereo: true
+  
+  collate_fn:
+    _target_: main.data.dataset_deap.collate_fn
+
+# Callbacks
+callbacks:
+  checkpoint:
+    _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    dirpath: "${ckpt_dir}"
+    filename: "deap-eeg-biot-{epoch:02d}-{valid_loss:.4f}"
+    monitor: "valid_loss"
+    save_top_k: 3
+    mode: "min"
+    save_last: true
+  
+  sample_logger:
+    _target_: main.module_controlnet_eeg.SampleLogger
+    sampling_steps: [50, 100]
+    cfg_scale: 7.0
+    num_samples: 2
+  
+  learning_rate_monitor:
+    _target_: pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: "step"
+
+# Trainer Configuration
+trainer:
+  _target_: pytorch_lightning.Trainer
+  accelerator: "gpu"
+  devices: 1
+  max_epochs: 100
+  precision: "16-mixed"
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 4
+  log_every_n_steps: 10
+  val_check_interval: 0.5
+  num_sanity_val_steps: 2
+  enable_progress_bar: true
+  enable_model_summary: true
+
+# Loggers
+loggers:
+  wandb:
+    _target_: pytorch_lightning.loggers.WandbLogger
+    project: "eeg-to-music"
+    name: "deap-controlnet-biot"
+    save_dir: "${logs_dir}"
+    log_model: false
+    tags: ["DEAP", "BIOT", "ControlNet", "EEG-to-Music"]
+

@@ -1,0 +1,15 @@
+# Additional requirements for BIOT integration
+# Install these in addition to your base requirements
+
+# Core BIOT dependency
+linear-attention-transformer>=0.18.0
+
+# Already in base requirements (listed for reference):
+# torch>=1.10.0
+# pytorch-lightning>=1.5.0
+# numpy>=1.20.0
+# torchaudio>=0.10.0
+
+# Note: The base BIOT code is in "Sample Code BIOT/BIOT/"
+# Make sure to add it to your Python path or install as package
+
