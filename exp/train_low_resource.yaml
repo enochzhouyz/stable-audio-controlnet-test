@@ -1,0 +1,122 @@
+# @package _global_
+# Low-resource training configuration for 4GB VRAM GPUs
+# Optimized for RTX 3050 (4GB VRAM) + 8GB RAM
+# 
+# WARNING: Training on 4GB VRAM is extremely challenging!
+# Consider using Google Colab or Kaggle for better results.
+
+train: True
+sample_rate: 44100
+chunk_dur: 10.0  # Reduced from 47.55 to save memory
+
+log_every_n_steps: 50  # Log less frequently to save time
+
+model:
+  _target_: main.module_controlnet_audio.Model
+  lr: 5e-5  # Lower learning rate for stability
+  lr_beta1: 0.95
+  lr_beta2: 0.999
+  lr_eps: 1e-6
+  lr_weight_decay: 1e-3
+  cfg_dropout_prob: 0.1
+  depth_factor: 0.1  # Minimal model size (2-3 layers instead of 5-12)
+
+datamodule:
+  _target_: main.module_controlnet_audio.WebDatasetDatamodule
+  train_dataset:
+    _target_: main.data.dataset_musdb.create_musdb_dataset
+    path: null
+    sample_rate: ${sample_rate}
+    chunk_dur: ${chunk_dur}
+    shardshuffle: True
+
+  val_dataset:
+    _target_: main.data.dataset_musdb.create_musdb_dataset
+    path: null
+    sample_rate: ${sample_rate}
+    chunk_dur: ${chunk_dur}
+    shardshuffle: False
+
+  shuffle_size: 1
+  batch_size_train: 1  # Must be 1 for 4GB VRAM
+  batch_size_val: 1
+  collate_fn:
+    _target_: main.data.dataset_musdb.collate_fn_conditional
+    _partial_: True
+  drop_last: True
+  num_workers: 0  # Set to 0 to save RAM, increase to 1-2 if you have more RAM
+  pin_memory: False  # Disable to save RAM
+  persistent_workers: False
+  multiprocessing_context: null
+
+callbacks:
+  rich_progress_bar:
+    _target_: pytorch_lightning.callbacks.TQDMProgressBar
+
+  model_checkpoint:
+    _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: "valid_loss"
+    save_top_k: 2  # Keep only 2 best models to save disk space
+    save_last: True
+    mode: "min"
+    verbose: True
+    dirpath: ${logs_dir}/ckpts/${oc.env:TAG}_${now:%Y-%m-%d-%H-%M-%S}
+    filename: 'epoch{epoch:02d}-loss{valid_loss:.3f}'
+    every_n_epochs: 5  # Save less frequently to save time
+
+  model_summary:
+    _target_: pytorch_lightning.callbacks.RichModelSummary
+    max_depth: 2
+
+  audio_samples_logger:
+    _target_: main.module_controlnet_audio.SampleLogger
+    sampling_steps: [ 25 ]  # Reduced from 100 to save memory and time
+    cfg_scale: 5.0  # Reduced from 7.0 to save memory
+    num_samples: 1  # Generate only 1 sample to save memory
+
+  # Early stopping to prevent wasting time on bad runs
+  early_stopping:
+    _target_: pytorch_lightning.callbacks.EarlyStopping
+    monitor: "valid_loss"
+    patience: 10
+    mode: "min"
+    verbose: True
+
+loggers:
+  # Disable wandb to save memory and network bandwidth
+  # Uncomment if you want to use wandb
+  # wandb:
+  #   _target_: pytorch_lightning.loggers.wandb.WandbLogger
+  #   project: ${oc.env:WANDB_PROJECT}
+  #   entity: ${oc.env:WANDB_ENTITY}
+  #   job_type: "train"
+  #   group: "low-resource"
+  #   save_dir: ${logs_dir}
+  
+  # Use CSV logger instead (lightweight)
+  csv:
+    _target_: pytorch_lightning.loggers.CSVLogger
+    save_dir: ${logs_dir}
+    name: "low_resource_training"
+
+trainer:
+  _target_: pytorch_lightning.Trainer
+  devices: 1
+  precision: 16  # Mixed precision (fp16) to save memory
+  accelerator: gpu
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 8  # Effective batch size = 8 (1 * 8)
+  min_epochs: 0
+  max_epochs: 50  # Reduced from -1 to prevent infinite training
+  enable_model_summary: True
+  log_every_n_steps: 1
+  check_val_every_n_epoch: 5  # Validate less frequently to save time
+  val_check_interval: null
+  limit_train_batches: 100  # Limit batches per epoch for faster iteration
+  limit_val_batches: 10  # Limit validation batches
+  num_sanity_val_steps: 0  # Skip sanity checks to save time
+  
+  # Enable gradient checkpointing (if supported)
+  # This trades compute for memory
+  # gradient_checkpointing: True
+

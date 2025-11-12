@@ -1,0 +1,125 @@
+# @package _global_
+# Google Colab Optimized Training Configuration
+# For T4 GPU (15GB VRAM) - Free Tier
+#
+# This configuration is optimized for Google Colab's free tier GPU.
+# Adjust parameters based on your Colab tier:
+# - Free (T4, 15GB): Use these settings
+# - Pro (P100/V100, 16-32GB): Increase depth_factor to 0.5, batch_size to 4
+# - Pro+ (A100, 40GB): Increase depth_factor to 0.5, batch_size to 8
+
+train: True
+sample_rate: 44100
+chunk_dur: 30.0  # 30 seconds (reduced from 47 for memory)
+
+log_every_n_steps: 100
+
+model:
+  _target_: main.module_controlnet_audio.Model
+  lr: 1e-4
+  lr_beta1: 0.95
+  lr_beta2: 0.999
+  lr_eps: 1e-6
+  lr_weight_decay: 1e-3
+  cfg_dropout_prob: 0.1
+  depth_factor: 0.3  # 30% of model (good balance for T4)
+
+datamodule:
+  _target_: main.module_controlnet_audio.WebDatasetDatamodule
+  train_dataset:
+    _target_: main.data.dataset_musdb.create_musdb_dataset
+    path: null
+    sample_rate: ${sample_rate}
+    chunk_dur: ${chunk_dur}
+    shardshuffle: True
+
+  val_dataset:
+    _target_: main.data.dataset_musdb.create_musdb_dataset
+    path: null
+    sample_rate: ${sample_rate}
+    chunk_dur: ${chunk_dur}
+    shardshuffle: False
+
+  shuffle_size: 1
+  batch_size_train: 2  # Batch size 2 for T4
+  batch_size_val: 2
+  collate_fn:
+    _target_: main.data.dataset_musdb.collate_fn_conditional
+    _partial_: True
+  drop_last: True
+  num_workers: 2  # Colab has good CPUs
+  pin_memory: True
+  persistent_workers: True
+  multiprocessing_context: null
+
+callbacks:
+  rich_progress_bar:
+    _target_: pytorch_lightning.callbacks.TQDMProgressBar
+
+  model_checkpoint:
+    _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: "valid_loss"
+    save_top_k: 3  # Keep top 3 checkpoints
+    save_last: True
+    mode: "min"
+    verbose: True
+    dirpath: ${logs_dir}/ckpts/${oc.env:TAG}_${now:%Y-%m-%d-%H-%M-%S}
+    filename: 'epoch{epoch:02d}-loss{valid_loss:.3f}'
+    every_n_epochs: 5  # Save every 5 epochs (important for Colab disconnects)
+
+  model_summary:
+    _target_: pytorch_lightning.callbacks.RichModelSummary
+    max_depth: 2
+
+  audio_samples_logger:
+    _target_: main.module_controlnet_audio.SampleLogger
+    sampling_steps: [ 50 ]  # 50 steps for validation
+    cfg_scale: 7.0
+    num_samples: 2
+
+  early_stopping:
+    _target_: pytorch_lightning.callbacks.EarlyStopping
+    monitor: "valid_loss"
+    patience: 15
+    mode: "min"
+    verbose: True
+
+  learning_rate_monitor:
+    _target_: pytorch_lightning.callbacks.LearningRateMonitor
+    logging_interval: "step"
+
+loggers:
+  # CSV logger (lightweight, always works)
+  csv:
+    _target_: pytorch_lightning.loggers.CSVLogger
+    save_dir: ${logs_dir}
+    name: "colab_training"
+
+  # Uncomment if you want to use Weights & Biases
+  # wandb:
+  #   _target_: pytorch_lightning.loggers.wandb.WandbLogger
+  #   project: ${oc.env:WANDB_PROJECT}
+  #   entity: ${oc.env:WANDB_ENTITY}
+  #   job_type: "train"
+  #   group: "colab"
+  #   save_dir: ${logs_dir}
+
+trainer:
+  _target_: pytorch_lightning.Trainer
+  devices: 1
+  precision: 16  # Mixed precision (fp16)
+  accelerator: gpu
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 4  # Effective batch size = 2 * 4 = 8
+  min_epochs: 0
+  max_epochs: 50  # Reasonable for Colab session
+  enable_model_summary: True
+  log_every_n_steps: 10
+  check_val_every_n_epoch: 5  # Validate every 5 epochs
+  val_check_interval: null
+  num_sanity_val_steps: 2
+  
+  # Colab-specific settings
+  enable_progress_bar: True
+  enable_checkpointing: True
+

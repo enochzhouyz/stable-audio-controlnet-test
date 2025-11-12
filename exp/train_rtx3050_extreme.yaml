@@ -1,0 +1,121 @@
+# @package _global_
+# EXTREME Low-Resource Training Configuration
+# For RTX 3050 (4GB VRAM) - Absolute Minimum Settings
+#
+# WARNING: This is EXTREMELY slow and produces lower quality results.
+# Training time: ~1 minute per step, ~50 hours per epoch
+# Recommended: Use Google Colab instead (free, 15GB GPU)
+#
+# Only use this if you:
+# - Cannot access cloud GPUs
+# - Want to experiment with training process
+# - Don't need high quality results
+# - Have LOTS of patience
+
+train: True
+sample_rate: 44100
+chunk_dur: 5.0  # VERY short audio (5 seconds only)
+
+log_every_n_steps: 10  # Log frequently to see progress
+
+model:
+  _target_: main.module_controlnet_audio.Model
+  lr: 5e-5  # Lower learning rate for stability
+  lr_beta1: 0.9
+  lr_beta2: 0.999
+  lr_eps: 1e-6
+  lr_weight_decay: 1e-3
+  cfg_dropout_prob: 0.1
+  depth_factor: 0.08  # MINIMAL model (1-2 layers only!)
+
+datamodule:
+  _target_: main.module_controlnet_audio.WebDatasetDatamodule
+  train_dataset:
+    _target_: main.data.dataset_musdb.create_musdb_dataset
+    path: null
+    sample_rate: ${sample_rate}
+    chunk_dur: ${chunk_dur}
+    shardshuffle: True
+
+  val_dataset:
+    _target_: main.data.dataset_musdb.create_musdb_dataset
+    path: null
+    sample_rate: ${sample_rate}
+    chunk_dur: ${chunk_dur}
+    shardshuffle: False
+
+  shuffle_size: 1
+  batch_size_train: 1  # MUST be 1 for 4GB
+  batch_size_val: 1
+  collate_fn:
+    _target_: main.data.dataset_musdb.collate_fn_conditional
+    _partial_: True
+  drop_last: True
+  num_workers: 0  # No multiprocessing to save RAM
+  pin_memory: False  # Disable to save RAM
+  persistent_workers: False
+  multiprocessing_context: null
+
+callbacks:
+  rich_progress_bar:
+    _target_: pytorch_lightning.callbacks.TQDMProgressBar
+
+  model_checkpoint:
+    _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: "valid_loss"
+    save_top_k: 1  # Keep only 1 best checkpoint
+    save_last: True
+    mode: "min"
+    verbose: True
+    dirpath: ${logs_dir}/ckpts/${oc.env:TAG}_${now:%Y-%m-%d-%H-%M-%S}
+    filename: 'epoch{epoch:02d}-loss{valid_loss:.3f}'
+    every_n_epochs: 10  # Save less frequently
+    save_on_train_epoch_end: True
+
+  model_summary:
+    _target_: pytorch_lightning.callbacks.RichModelSummary
+    max_depth: 1
+
+  # NO audio samples logger - too slow and memory intensive
+  # audio_samples_logger:
+  #   _target_: main.module_controlnet_audio.SampleLogger
+  #   sampling_steps: [ 10 ]
+  #   cfg_scale: 3.0
+  #   num_samples: 1
+
+  early_stopping:
+    _target_: pytorch_lightning.callbacks.EarlyStopping
+    monitor: "valid_loss"
+    patience: 5  # Stop early if not improving
+    mode: "min"
+    verbose: True
+
+loggers:
+  # CSV logger only (lightweight)
+  csv:
+    _target_: pytorch_lightning.loggers.CSVLogger
+    save_dir: ${logs_dir}
+    name: "rtx3050_training"
+
+trainer:
+  _target_: pytorch_lightning.Trainer
+  devices: 1
+  precision: 16  # Mixed precision (REQUIRED)
+  accelerator: gpu
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 16  # Effective batch = 1 * 16 = 16
+  min_epochs: 0
+  max_epochs: 100  # Will take VERY long
+  enable_model_summary: True
+  log_every_n_steps: 1
+  check_val_every_n_epoch: 10  # Validate rarely to save time
+  val_check_interval: null
+  limit_train_batches: 50  # Limit to 50 batches per epoch (for faster iteration)
+  limit_val_batches: 5  # Only 5 validation batches
+  num_sanity_val_steps: 0  # Skip sanity checks
+  
+  # Performance settings
+  enable_progress_bar: True
+  enable_checkpointing: True
+  detect_anomaly: False  # Disable for speed
+
